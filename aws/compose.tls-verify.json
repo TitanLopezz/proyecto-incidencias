@@ -1,0 +1,16 @@
+{
+  "services": {
+    "db": {
+      "command": ["postgres", "-c", "ssl=on", "-c", "ssl_cert_file=/var/lib/postgresql/data/verify.crt", "-c", "ssl_key_file=/var/lib/postgresql/data/verify.key"]
+    },
+    "backend": {
+      "entrypoint": ["dumb-init", "--", "node", "deploy/entrypoint.cjs"], "command": ["serve"],
+      "environment": {
+        "NODE_ENV": "production", "DB_HOST": "db", "DB_PORT": "5432", "DB_NAME": "incidencias", "DATABASE_SSL": "true",
+        "FRONTEND_ORIGIN": "https://verify.example.test", "MIGRATE_ON_START": "false", "TRUST_PROXY_HOPS": "2"
+      },
+      "volumes": ["../output/aws-verify/secrets:/run/incidencias:ro"],
+      "read_only": true, "tmpfs": ["/tmp"], "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"]
+    }
+  }
+}

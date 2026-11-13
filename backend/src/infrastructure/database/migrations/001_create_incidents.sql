@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS incidents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title VARCHAR(150) NOT NULL,
+  description VARCHAR(2000) NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'abierta',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -1,0 +1,13 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+        VITE_MAP_DEFAULT_LATITUDE: "16.7528"
+        VITE_MAP_DEFAULT_LONGITUDE: "-93.1152"
+    environment:
+      BACKEND_UPSTREAM: "${BACKEND_UPSTREAM:?Indica la IP privada del backend con puerto 3000}"
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped

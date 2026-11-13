@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "dev": "node scripts/dev-all.js",
+    "start": "node scripts/dev-all.js",
+    "dev:all": "node scripts/dev-all.js"
+  },
+  "devDependencies": {
+    "@rolldown/plugin-babel": "^0.2.0",
+    "babel-plugin-react-compiler": "^1.0.0"
+  }
+}

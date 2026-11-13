@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    environment:
+      POSTGRES_DB: incidencias
+      POSTGRES_USER: incidencias
+      POSTGRES_PASSWORD: ${LAB_DB_PASSWORD:?Define LAB_DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "incidencias", "-d", "incidencias"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      NODE_ENV: development
+      MIGRATE_ON_START: "true"
+      FRONTEND_ORIGIN: http://localhost:8080
+      PGHOST: db
+      PGDATABASE: incidencias
+      PGUSER: incidencias
+      PGPASSWORD: ${LAB_DB_PASSWORD:?Define LAB_DB_PASSWORD}
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${LAB_JWT_SECRET:?Define LAB_JWT_SECRET}
+    ports:
+      - "3000:3000"
+    volumes:
+      - photos:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  photos:

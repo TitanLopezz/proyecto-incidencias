@@ -1,0 +1,8 @@
+{
+  "on_http_request": [
+    {
+      "expressions": ["req.method != 'POST' || !req.url.path.matches('^/webhook(-test)?/[0-9a-fA-F-]+/webhook$')"],
+      "actions": [{ "type": "deny", "config": { "status_code": 403 } }]
+    }
+  ]
+}

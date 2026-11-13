@@ -1,0 +1,53 @@
+name: incidencias-telegram
+
+services:
+  n8n:
+    image: ${N8N_IMAGE:?Define N8N_IMAGE con un digest verificado de n8n 2.35 o posterior}
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      N8N_WEBHOOK_URL: https://${TELEGRAM_WEBHOOK_HOST:?Define el dominio del webhook}/
+      N8N_EDITOR_BASE_URL: http://localhost:5679/
+      N8N_PROXY_HOPS: "1"
+      N8N_ENCRYPTION_KEY_FILE: /run/secrets/n8n_encryption_key
+      GENERIC_TIMEZONE: America/Mexico_City
+      TZ: America/Mexico_City
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    ports:
+      - "127.0.0.1:5679:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    secrets:
+      - n8n_encryption_key
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5678/healthz/readiness').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  caddy:
+    image: ${CADDY_IMAGE:?Define CADDY_IMAGE con un digest verificado de Caddy 2}
+    restart: unless-stopped
+    depends_on:
+      n8n:
+        condition: service_healthy
+    environment:
+      TELEGRAM_WEBHOOK_HOST: ${TELEGRAM_WEBHOOK_HOST:?Define el dominio del webhook}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+secrets:
+  n8n_encryption_key:
+    file: ${N8N_ENCRYPTION_KEY_PATH:?Define el archivo con la clave de cifrado}
+
+volumes:
+  n8n_data:
+  caddy_data:
+  caddy_config:

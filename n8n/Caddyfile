@@ -1,0 +1,12 @@
+{$TELEGRAM_WEBHOOK_HOST} {
+	@telegram {
+		method POST
+		path_regexp ^/webhook(-test)?/[0-9a-fA-F-]+/webhook$
+	}
+	handle @telegram {
+		reverse_proxy n8n:5678
+	}
+	handle {
+		respond 404
+	}
+}

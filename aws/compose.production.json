@@ -1,0 +1,37 @@
+{
+  "name": "incidencias",
+  "services": {
+    "backend": {
+      "image": "${BACKEND_IMAGE:?Set BACKEND_IMAGE to an ECR image digest}",
+      "entrypoint": ["dumb-init", "--", "node", "deploy/entrypoint.cjs"],
+      "command": ["serve"],
+      "environment": {
+        "NODE_ENV": "production", "PORT": "3000", "DB_HOST": "${DB_HOST:?Set DB_HOST}",
+        "DB_PORT": "5432", "DB_NAME": "incidencias", "DATABASE_SSL": "true",
+        "DB_POOL_MAX": "10", "DB_CONNECTION_TIMEOUT_MS": "10000", "MIGRATE_ON_START": "false",
+        "FRONTEND_ORIGIN": "https://${DOMAIN_NAME:?Set DOMAIN_NAME}", "TRUST_PROXY_HOPS": "2",
+        "PHOTO_STORAGE_DIR": "/app/uploads/photos",
+        "INCIDENT_DUE_HOURS": "${INCIDENT_DUE_HOURS:-48}",
+        "INCIDENT_ESCALATION_HOURS": "${INCIDENT_ESCALATION_HOURS:-0}"
+      },
+      "volumes": [
+        "${PHOTOS_PATH:-/srv/incidencias/photos}:/app/uploads/photos",
+        "/opt/incidencias/secrets/app.json:/run/incidencias/app.json:ro",
+        "/opt/incidencias/secrets/jwt.json:/run/incidencias/jwt.json:ro",
+        "/opt/incidencias/secrets/rds-ca.pem:/run/incidencias/rds-ca.pem:ro"
+      ],
+      "read_only": true, "tmpfs": ["/tmp"], "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"], "restart": "unless-stopped", "stop_grace_period": "35s",
+      "mem_limit": "768m", "cpus": 1.5,
+      "logging": {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}
+    },
+    "frontend": {
+      "image": "${FRONTEND_IMAGE:?Set FRONTEND_IMAGE to an ECR image digest}",
+      "environment": {"BACKEND_UPSTREAM": "backend:3000"},
+      "ports": ["8080:8080"],
+      "depends_on": {"backend": {"condition": "service_healthy"}},
+      "restart": "unless-stopped", "stop_grace_period": "35s", "mem_limit": "128m",
+      "logging": {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}
+    }
+  }
+}

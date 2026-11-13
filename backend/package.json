@@ -1,0 +1,27 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "migrate": "node src/infrastructure/database/runMigrations.js",
+    "bootstrap:superadmins": "node src/infrastructure/database/bootstrapSuperAdmins.js",
+    "seed:superadmins": "node src/infrastructure/database/bootstrapSuperAdmins.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.23.0",
+    "sharp": "^0.35.5",
+    "socket.io": "^4.8.4"
+  }
+}

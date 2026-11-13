@@ -1,0 +1,239 @@
+{
+  "name": "Telegram · Registro y seguimiento de incidencias",
+  "nodes": [
+    {
+      "id": "80cf848a-0c86-4aea-962e-000000000001",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "webhookId": "80cf848a-0c86-4aea-962e-000000000002"
+    },
+    {
+      "id": "80cf848a-0c86-4aea-962e-000000000003",
+      "name": "Validar mensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const message = $input.first().json.message;\nif (message?.chat?.type !== 'private') return [];\n\nconst chatId = message.chat.id;\nconst text = (message.text ?? '').trim().replace(/^\\x60+|\\x60+$/g, '').trim();\nconst action = text.toLowerCase().normalize('NFD').replace(/\\p{M}/gu, '').replace(/^[¡!¿?\\s]+|[¡!¿?.,\\s]+$/g, '');\nconst respond = reply => [{ json: { chatId, reply } }];\nconst call = (action, input = {}) => [{ json: { chatId, payload: { action, chatId: String(chatId), ...input } } }];\nconst link = text.match(/^\\/start(?:@\\w+)?\\s+([A-Za-z0-9_-]{43})$/i);\nif (link) return call('link', { code: link[1] });\nconst welcome = '¡Hola! Soy el asistente de incidencias de Tuxtla Gutiérrez. ¿Qué quieres hacer?\\n\\n1. Consultar un reporte por folio\\n2. Ver mis reportes recientes\\n3. Registrar una incidencia\\n4. Ver ayuda\\n\\nToca un botón o responde con el número. Para usar tus reportes, abre Telegram desde tu cuenta ciudadana y pulsa Iniciar.';\nconst lookupHelp = 'Pega el folio completo del reporte, incluidos los guiones. Si no lo tienes, toca Mis reportes recientes o escribe 2.';\nconst reportHelp = 'Envía en un solo mensaje la categoría, el título, la descripción, la latitud y la longitud. Separa cada dato con |.\\n\\nCategorías: bache, alumbrado o basura.\\n\\nEjemplo:\\nbache | Bache en la calle | Está frente al parque | 16.75 | -93.11\\n\\nUsa punto decimal y coordenadas de Tuxtla Gutiérrez.';\nconst help = 'Abierta: recibimos tu reporte.\\nEn proceso: el equipo está atendiendo la incidencia.\\nResuelta: el equipo marcó la incidencia como resuelta.\\nCerrada: concluyó el seguimiento.\\n\\nEscribe menú para volver a las opciones.';\nconst folioPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n\nif (/^\\/(?:start|menu)(?:@\\w+)?(?:\\s+.*)?$/i.test(text) || ['hola', 'buen dia', 'buenos dias', 'buenas', 'buenas tardes', 'buenas noches', 'menu', 'inicio'].includes(action)) return respond(welcome);\nif (['4', 'ayuda'].includes(action) || /^\\/ayuda(?:@\\w+)?$/i.test(text)) return respond(help);\nif (['1', 'consultar mi reporte', 'consultar reporte'].includes(action)) return respond(lookupHelp);\nif (['2', 'mis reportes recientes', 'mis reportes', '/misreportes'].includes(action)) return call('recent');\nif (['3', 'registrar incidencia', 'registrar una incidencia'].includes(action)) return respond(reportHelp);\n\nconst status = text.match(/^\\/estado(?:@\\w+)?(?:\\s+([\\s\\S]+))?$/i);\nconst folio = (status ? status[1]?.trim() : text) ?? '';\nif (folioPattern.test(folio)) return call('status', { folio: folio.toLowerCase() });\nif (status || /^[0-9a-f]{8}-/i.test(folio)) return respond(lookupHelp);\n\nconst report = text.match(/^\\/reportar(?:@\\w+)?(?:\\s+([\\s\\S]+))?$/i);\nif (!report && !text.includes('|')) {\n  return respond('Puedes pegar un folio, responder con el número de una opción o escribir menú para ver qué puedo hacer.');\n}\nif (report && !report[1]) return respond(reportHelp);\nconst fields = (report ? report[1] : text).split('|').map(field => field.trim());\nif (fields.length !== 5) return respond('Necesito cinco datos separados por |.\\n\\n' + reportHelp);\nconst [rawCategory, title, description, lat, lon] = fields;\nconst category = rawCategory.toLowerCase();\nif (!['bache', 'alumbrado', 'basura'].includes(category)) return respond('Elige una categoría válida: bache, alumbrado o basura.\\n\\n' + reportHelp);\nif (!title || title.length > 150) return respond('Escribe un título de entre 1 y 150 caracteres y vuelve a enviar los cinco datos.');\nif (!description || description.length > 2000) return respond('Escribe una descripción de entre 1 y 2,000 caracteres y vuelve a enviar los cinco datos.');\nconst coordinatePattern = /^-?\\d+(\\.\\d+)?$/;\nif (!coordinatePattern.test(lat) || !coordinatePattern.test(lon)) return respond('Escribe la latitud y la longitud con punto decimal, como 16.75 | -93.11, y vuelve a enviar los cinco datos.');\nreturn call('create', { incident: { category, title, description, latitude: Number(lat), longitude: Number(lon) } });"
+      }
+    },
+    {
+      "id": "80cf848a-0c86-4aea-962e-000000000005",
+      "name": "¿Requiere la API?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "80cf848a-0c86-4aea-962e-000000000004",
+              "leftValue": "={{ !!$json.payload }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "80cf848a-0c86-4aea-962e-000000000006",
+      "name": "API de incidencias",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        -140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://incidencias.example/api/integrations/telegram",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 10000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}"
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "80cf848a-0c86-4aea-962e-000000000024",
+      "name": "Preparar respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -140
+      ],
+      "parameters": {
+        "jsCode": "const { chatId, payload } = $('Validar mensaje').first().json;\nconst response = $input.first().json;\nconst data = response.body?.data;\nconst labels = { abierta: 'Abierta', en_proceso: 'En proceso', resuelta: 'Resuelta', cerrada: 'Cerrada' };\nlet reply = 'El servicio de incidencias no está disponible en este momento. Intenta más tarde.';\nif (response.statusCode === 200 && data) {\n  if (payload.action === 'link') {\n    reply = 'Tu cuenta quedó vinculada. ¿Qué quieres hacer?\\n\\n1. Consultar por folio\\n2. Ver mis reportes recientes\\n3. Registrar una incidencia\\n4. Ver ayuda';\n  } else if (payload.action === 'create') {\n    reply = 'Incidencia registrada. Guarda este folio para consultar el avance:\\n\\n' + data.id;\n  } else if (payload.action === 'recent') {\n    const lines = data.map(item => [String(item.title).slice(0, 150), 'Estado: ' + (labels[item.status] ?? 'Sin información'), 'Folio: ' + item.id].join('\\n'));\n    reply = lines.length ? ['Tus reportes más recientes', ...lines, 'Pega un folio para ver el detalle.'].join('\\n\\n') : 'Aún no tienes reportes. Toca Registrar incidencia para crear uno.';\n  } else {\n    const lines = ['Folio: ' + data.id, 'Estado: ' + (labels[data.status] ?? 'Sin información')];\n    const next = {\n      abierta: 'Recibimos tu reporte. Está pendiente de atención.',\n      en_proceso: 'El equipo está atendiendo la incidencia.',\n      resuelta: 'La incidencia fue atendida y está pendiente de cierre.',\n      cerrada: 'El seguimiento del reporte concluyó.',\n    };\n    if (next[data.status]) lines.push(next[data.status]);\n    const date = new Date(data.updatedAt ?? data.createdAt ?? '');\n    if (Number.isFinite(date.getTime())) {\n      lines.push('Última actualización: ' + date.toLocaleString('es-MX', {\n        timeZone: 'America/Mexico_City', dateStyle: 'medium', timeStyle: 'short',\n      }));\n    }\n    reply = lines.join('\\n');\n  }\n} else if ([400, 403, 404, 409, 422].includes(response.statusCode)) {\n  reply = response.body?.error?.message ?? reply;\n} else if (payload.action === 'create') {\n  reply = 'No pude confirmar el registro. Consulta Mis reportes recientes antes de reenviarlo.';\n}\nreturn [{ json: { chatId, reply } }];"
+      }
+    },
+    {
+      "id": "80cf848a-0c86-4aea-962e-000000000012",
+      "name": "Responder en Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.reply.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        },
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Consultar mi reporte"
+                  },
+                  {
+                    "text": "Mis reportes recientes"
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Registrar incidencia"
+                  },
+                  {
+                    "text": "Ayuda"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validar mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar mensaje": {
+      "main": [
+        [
+          {
+            "node": "¿Requiere la API?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Requiere la API?": {
+      "main": [
+        [
+          {
+            "node": "API de incidencias",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder en Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API de incidencias": {
+      "main": [
+        [
+          {
+            "node": "Preparar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar respuesta": {
+      "main": [
+        [
+          {
+            "node": "Responder en Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false
+  }
+}

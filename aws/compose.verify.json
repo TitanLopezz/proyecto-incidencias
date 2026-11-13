@@ -1,0 +1,36 @@
+{
+  "name": "incidencias-verify",
+  "services": {
+    "db": {
+      "image": "postgis/postgis:15-3.3",
+      "environment": {"POSTGRES_USER": "verify", "POSTGRES_PASSWORD": "disposable-verify-only", "POSTGRES_DB": "incidencias"},
+      "healthcheck": {"test": ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U verify -d incidencias"], "interval": "3s", "timeout": "3s", "retries": 30},
+      "volumes": ["verify_db:/var/lib/postgresql/data"]
+    },
+    "backend": {
+      "image": "incidencias-backend:verify", "build": {"context": "../backend"},
+      "environment": {
+        "NODE_ENV": "development", "PORT": "3000", "PGHOST": "db", "PGUSER": "verify",
+        "PGPASSWORD": "disposable-verify-only", "PGDATABASE": "incidencias",
+        "JWT_SECRET": "disposable-verification-secret-at-least-32-bytes", "MIGRATE_ON_START": "true",
+        "TELEGRAM_INTEGRATION_KEY": "disposable-telegram-key-for-verification-only",
+        "FRONTEND_ORIGIN": "http://localhost:18080,http://127.0.0.1:18080"
+      },
+      "depends_on": {"db": {"condition": "service_healthy"}},
+      "volumes": ["verify_photos:/app/uploads"]
+    },
+    "frontend": {
+      "image": "incidencias-frontend:verify", "build": {"context": "../frontend", "args": {"VITE_API_URL": "/api"}},
+      "environment": {"BACKEND_UPSTREAM": "backend:3000"},
+      "ports": ["127.0.0.1:18080:8080"],
+      "depends_on": {"backend": {"condition": "service_healthy"}}
+    },
+    "smoke": {
+      "image": "incidencias-backend:verify", "profiles": ["tools"],
+      "entrypoint": ["node", "/app/smoke.cjs"],
+      "environment": {"PGHOST": "db", "PGUSER": "verify", "PGPASSWORD": "disposable-verify-only", "PGDATABASE": "incidencias"},
+      "volumes": ["../scripts/aws-smoke.cjs:/app/smoke.cjs:ro", "../output/aws-verify:/app/test-state", "verify_photos:/app/uploads:ro"]
+    }
+  },
+  "volumes": {"verify_db": {}, "verify_photos": {}}
+}

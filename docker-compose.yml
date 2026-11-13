@@ -1,0 +1,94 @@
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: incidencias-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in the root .env file}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in the root .env file}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - backend_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: incidencias-backend
+    volumes:
+      - incident_photos:/app/uploads
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      MIGRATE_ON_START: "true"
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080,http://127.0.0.1:8080,http://localhost:5175,http://127.0.0.1:5175}
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:?Set POSTGRES_DB in the root .env file}
+      PGUSER: ${POSTGRES_USER:?Set POSTGRES_USER in the root .env file}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file}
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file}
+      TELEGRAM_INTEGRATION_KEY: ${TELEGRAM_INTEGRATION_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      INCIDENT_DUE_HOURS: ${INCIDENT_DUE_HOURS:-48}
+      INCIDENT_ESCALATION_HOURS: ${INCIDENT_ESCALATION_HOURS:-0}
+    ports:
+      - "127.0.0.1:3001:3000"
+    expose:
+      - "3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend_internal
+      - app_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+        VITE_MAP_DEFAULT_LATITUDE: ${VITE_MAP_DEFAULT_LATITUDE:-16.7528}
+        VITE_MAP_DEFAULT_LONGITUDE: ${VITE_MAP_DEFAULT_LONGITUDE:--93.1152}
+    container_name: incidencias-frontend
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app_network
+    restart: unless-stopped
+
+networks:
+  backend_internal:
+    driver: bridge
+  app_network:
+    driver: bridge
+
+volumes:
+  db_data:
+  incident_photos:

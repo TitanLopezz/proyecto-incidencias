@@ -1,0 +1,18 @@
+{
+  "tables": [
+    "categories",
+    "contactos_equipo",
+    "evidences",
+    "incident_status_history",
+    "incidents",
+    "llamadas_equipo",
+    "notifications",
+    "schema_migrations",
+    "superadmin_bootstrap",
+    "users"
+  ],
+  "foreignKeys": 13,
+  "indexes": 14,
+  "postgis": true,
+  "hasRows": false
+}

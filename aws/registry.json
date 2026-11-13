@@ -1,0 +1,20 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Private immutable ECR repositories for Incidencias",
+  "Resources": {
+    "Backend": {
+      "Type": "AWS::ECR::Repository", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain",
+      "Properties": {"ImageTagMutability": "IMMUTABLE", "ImageScanningConfiguration": {"ScanOnPush": true}, "EncryptionConfiguration": {"EncryptionType": "AES256"}}
+    },
+    "Frontend": {
+      "Type": "AWS::ECR::Repository", "DeletionPolicy": "Retain", "UpdateReplacePolicy": "Retain",
+      "Properties": {"ImageTagMutability": "IMMUTABLE", "ImageScanningConfiguration": {"ScanOnPush": true}, "EncryptionConfiguration": {"EncryptionType": "AES256"}}
+    }
+  },
+  "Outputs": {
+    "BackendUri": {"Value": {"Fn::GetAtt": ["Backend", "RepositoryUri"]}},
+    "FrontendUri": {"Value": {"Fn::GetAtt": ["Frontend", "RepositoryUri"]}},
+    "BackendArn": {"Value": {"Fn::GetAtt": ["Backend", "Arn"]}},
+    "FrontendArn": {"Value": {"Fn::GetAtt": ["Frontend", "Arn"]}}
+  }
+}

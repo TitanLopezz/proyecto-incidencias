@@ -1,0 +1,9 @@
+# Local override for an existing PostgreSQL installation on the Windows host.
+services:
+  backend:
+    environment:
+      PGHOST: host.docker.internal
+      PGPORT: ${DB_PORT:-5432}
+      PGDATABASE: ${DB_NAME:?Set DB_NAME to the existing Windows database}
+      PGUSER: ${DB_USER:?Set DB_USER for the Windows database}
+      PGPASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD for the Windows database}

@@ -1,0 +1,17 @@
+.incident-photos { margin-block: 12px; min-width: 0; border: 1px solid #dbe3ed; border-radius: 10px; padding: 12px; }
+.incident-photos p { font-size: .85rem; color: #475569; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 12px; }
+.photo-item { min-width: 0; }
+.photo-item img { width: 100%; height: 140px; object-fit: contain; background: #f1f5f9; border-radius: 8px; }
+.photo-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.incident-photos button, .photo-replace { padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; color: #0f172a; cursor: pointer; font-size: .85rem; }
+.photo-replace { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.photo-replace input { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; font-size: .8rem; }
+.photo-actions > * { max-width: 100%; box-sizing: border-box; }
+.photo-editor { margin-top: 14px; padding: 12px; border: 2px solid #3b82f6; border-radius: 10px; }
+.photo-editor canvas { display: block; max-width: 100%; max-height: 360px; margin: auto; object-fit: contain; background: #e2e8f0; }
+.photo-crop-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-block: 12px; }
+.photo-crop-controls label { display: grid; gap: 4px; font-size: .85rem; }
+.photo-crop-controls input { width: 100%; }
+.photo-full img { display: block; max-width: 100%; max-height: 80vh; margin: 10px auto; object-fit: contain; }
+.incident-photos button:disabled, .photo-editor button:disabled { opacity: .5; cursor: wait; }

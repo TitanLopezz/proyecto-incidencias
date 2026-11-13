@@ -1,0 +1,944 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Incidencias: EC2 + private RDS + HTTPS ALB + retained local photo EBS. No S3 or photo snapshots.",
+  "Parameters": {
+    "DomainName": {
+      "Type": "String",
+      "AllowedPattern": "[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}",
+      "Description": "DNS name without scheme; certificate must cover it"
+    },
+    "CertificateArn": {
+      "Type": "String",
+      "AllowedPattern": "arn:aws[a-z-]*:acm:[a-z0-9-]+:[0-9]{12}:certificate/[a-f0-9-]+",
+      "Description": "Issued ACM certificate ARN in this region"
+    },
+    "BackendImage": {
+      "Type": "String",
+      "AllowedPattern": "[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9/_-]+@sha256:[a-f0-9]{64}"
+    },
+    "FrontendImage": {
+      "Type": "String",
+      "AllowedPattern": "[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9/_-]+@sha256:[a-f0-9]{64}"
+    },
+    "EcrRepositoryArns": {
+      "Type": "CommaDelimitedList",
+      "Description": "Exactly the two ECR repository ARNs; no wildcard"
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Default": "t3.small",
+      "AllowedValues": [
+        "t3.small",
+        "t3.medium",
+        "t3.large"
+      ]
+    },
+    "DatabaseClass": {
+      "Type": "String",
+      "Default": "db.t4g.small",
+      "AllowedValues": [
+        "db.t4g.micro",
+        "db.t4g.small",
+        "db.t4g.medium"
+      ]
+    },
+    "PhotoDiskGiB": {
+      "Type": "Number",
+      "Default": 20,
+      "MinValue": 10,
+      "MaxValue": 1000
+    },
+    "LatestAmi": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.42.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {}
+    },
+    "GatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicRoutes": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        }
+      }
+    },
+    "PublicDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "GatewayAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRoutes"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.42.0.0/24",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": true
+      }
+    },
+    "PublicRouteA": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicA"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRoutes"
+        }
+      }
+    },
+    "PrivateA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.42.10.0/24",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false
+      }
+    },
+    "PublicB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.42.1.0/24",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": true
+      }
+    },
+    "PublicRouteB": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicB"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRoutes"
+        }
+      }
+    },
+    "PrivateB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.42.11.0/24",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            1,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false
+      }
+    },
+    "AlbGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Public HTTPS and HTTP redirect only",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    },
+    "AppGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Application only accepts ALB traffic; SSM administration",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "SourceSecurityGroupId": {
+              "Ref": "AlbGroup"
+            }
+          }
+        ]
+      }
+    },
+    "DatabaseGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "PostgreSQL only from app instance",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "SourceSecurityGroupId": {
+              "Ref": "AppGroup"
+            }
+          }
+        ]
+      }
+    },
+    "DatabaseSubnets": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Private DB subnets",
+        "SubnetIds": [
+          {
+            "Ref": "PrivateA"
+          },
+          {
+            "Ref": "PrivateB"
+          }
+        ]
+      }
+    },
+    "Database": {
+      "Type": "AWS::RDS::DBInstance",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Engine": "postgres",
+        "EngineLifecycleSupport": "open-source-rds-extended-support-disabled",
+        "DBInstanceClass": {
+          "Ref": "DatabaseClass"
+        },
+        "AllocatedStorage": 20,
+        "MaxAllocatedStorage": 100,
+        "StorageType": "gp3",
+        "StorageEncrypted": true,
+        "MasterUsername": "incidencias_owner",
+        "ManageMasterUserPassword": true,
+        "DBName": "incidencias",
+        "DBSubnetGroupName": {
+          "Ref": "DatabaseSubnets"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Ref": "DatabaseGroup"
+          }
+        ],
+        "PubliclyAccessible": false,
+        "MultiAZ": false,
+        "BackupRetentionPeriod": 7,
+        "AutoMinorVersionUpgrade": true,
+        "DeletionProtection": true
+      }
+    },
+    "AppSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{}",
+          "GenerateStringKey": "DB_PASSWORD",
+          "PasswordLength": 48,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "JwtSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{}",
+          "GenerateStringKey": "JWT_SECRET",
+          "PasswordLength": 48,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "AdminOneSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 48,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "AdminTwoSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 48,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "InstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "ApplicationBootstrap",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "secretsmanager:GetSecretValue"
+                  ],
+                  "Resource": [
+                    {
+                      "Ref": "AppSecret"
+                    },
+                    {
+                      "Ref": "JwtSecret"
+                    },
+                    {
+                      "Ref": "AdminOneSecret"
+                    },
+                    {
+                      "Ref": "AdminTwoSecret"
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "Database",
+                        "MasterUserSecret.SecretArn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchGetImage"
+                  ],
+                  "Resource": {
+                    "Ref": "EcrRepositoryArns"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "InstanceRole"
+          }
+        ]
+      }
+    },
+    "PhotoVolume": {
+      "Type": "AWS::EC2::Volume",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "Size": {
+          "Ref": "PhotoDiskGiB"
+        },
+        "VolumeType": "gp3",
+        "Encrypted": true,
+        "Tags": [
+          {
+            "Key": "Purpose",
+            "Value": "incidencias-photos-no-automatic-backup"
+          }
+        ]
+      }
+    },
+    "BootstrapHandle": {
+      "Type": "AWS::CloudFormation::WaitConditionHandle",
+      "Properties": {}
+    },
+    "AppInstance": {
+      "Type": "AWS::EC2::Instance",
+      "DependsOn": "PublicDefaultRoute",
+      "Properties": {
+        "ImageId": {
+          "Ref": "LatestAmi"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "IamInstanceProfile": {
+          "Ref": "InstanceProfile"
+        },
+        "SubnetId": {
+          "Ref": "PublicA"
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "AppGroup"
+          }
+        ],
+        "MetadataOptions": {
+          "HttpTokens": "required",
+          "HttpPutResponseHopLimit": 1
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "VolumeSize": 20,
+              "VolumeType": "gp3",
+              "Encrypted": true,
+              "DeleteOnTermination": true
+            }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\nset -euo pipefail\n",
+                "export AWS_REGION='",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "'\n",
+                "export PHOTO_VOLUME='",
+                {
+                  "Ref": "PhotoVolume"
+                },
+                "'\n",
+                "export BACKEND_IMAGE='",
+                {
+                  "Ref": "BackendImage"
+                },
+                "'\n",
+                "export FRONTEND_IMAGE='",
+                {
+                  "Ref": "FrontendImage"
+                },
+                "'\n",
+                "export DB_HOST='",
+                {
+                  "Fn::GetAtt": [
+                    "Database",
+                    "Endpoint.Address"
+                  ]
+                },
+                "'\n",
+                "export DOMAIN_NAME='",
+                {
+                  "Ref": "DomainName"
+                },
+                "'\n",
+                "export APP_SECRET='",
+                {
+                  "Ref": "AppSecret"
+                },
+                "'\n",
+                "export JWT_SECRET_ARN='",
+                {
+                  "Ref": "JwtSecret"
+                },
+                "'\n",
+                "export RDS_SECRET='",
+                {
+                  "Fn::GetAtt": [
+                    "Database",
+                    "MasterUserSecret.SecretArn"
+                  ]
+                },
+                "'\n",
+                "export ADMIN_ONE_SECRET='",
+                {
+                  "Ref": "AdminOneSecret"
+                },
+                "'\n",
+                "export ADMIN_TWO_SECRET='",
+                {
+                  "Ref": "AdminTwoSecret"
+                },
+                "'\n",
+                "export SIGNAL_URL='",
+                {
+                  "Ref": "BootstrapHandle"
+                },
+                "'\n",
+                "\nfinish() {\n code=$?\n trap - EXIT\n status=FAILURE\n [ \"$code\" = 0 ] && status=SUCCESS\n printf '{\"Status\":\"%s\",\"Reason\":\"Bootstrap finished; see cloud-init logs\",\"UniqueId\":\"incidencias\",\"Data\":\"\"}' \"$status\" | curl --silent --show-error --fail -X PUT -H 'Content-Type:' --data-binary @- \"$SIGNAL_URL\" || true\n exit \"$code\"\n}\ntrap finish EXIT\n",
+                "# Variables are injected by CloudFormation. Do not enable shell tracing.\nset -euo pipefail\numask 027\ndnf install -y docker jq awscli2\nsystemctl enable --now docker\ninstall -d -m 755 /usr/local/lib/docker/cli-plugins\ncurl -fsSL --retry 5 \"https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-x86_64\" -o /usr/local/lib/docker/cli-plugins/docker-compose\ncurl -fsSL --retry 5 \"https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-x86_64.sha256\" -o /tmp/compose.sha256\nprintf '%s  %s\\n' \"$(cut -d ' ' -f 1 /tmp/compose.sha256)\" /usr/local/lib/docker/cli-plugins/docker-compose | sha256sum --check --status\nchmod 755 /usr/local/lib/docker/cli-plugins/docker-compose\n\n# Select the exact attached EBS volume by serial, never by enumeration order.\nserial=\"${PHOTO_VOLUME//-/}\"\ndevice=''\nfor attempt in $(seq 1 120); do\n  device=$(lsblk -dn -o PATH,SERIAL | awk -v serial=\"$serial\" '$2 == serial {print $1}')\n  if [ -n \"$device\" ]; then break; fi\n  sleep 5\ndone\ntest -b \"$device\"\nif ! blkid \"$device\" >/dev/null 2>&1; then mkfs.ext4 \"$device\"; fi\ntest \"$(blkid -s TYPE -o value \"$device\")\" = ext4\ninstall -d -m 755 /srv/incidencias\nuuid=$(blkid -s UUID -o value \"$device\")\ngrep -q \"UUID=$uuid \" /etc/fstab || printf 'UUID=%s /srv/incidencias ext4 defaults 0 2\\n' \"$uuid\" >> /etc/fstab\nmountpoint -q /srv/incidencias || mount /srv/incidencias\ninstall -d -m 750 -o 1000 -g 1000 /srv/incidencias/photos\ninstall -d -m 750 -o root -g 1000 /opt/incidencias/secrets\ncd /opt/incidencias\n\nfetch_secret() {\n  aws secretsmanager get-secret-value --region \"$AWS_REGION\" --secret-id \"$1\" --query SecretString --output text > \"secrets/$2.json\"\n  chown root:1000 \"secrets/$2.json\"\n  chmod 640 \"secrets/$2.json\"\n}\nfetch_secret \"$APP_SECRET\" app\nfetch_secret \"$JWT_SECRET_ARN\" jwt\nfetch_secret \"$RDS_SECRET\" rds\nfetch_secret \"$ADMIN_ONE_SECRET\" admin-one\nfetch_secret \"$ADMIN_TWO_SECRET\" admin-two\ncurl -fsSL --retry 5 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o secrets/rds-ca.pem\nchmod 644 secrets/rds-ca.pem\n\n# This block is replaced by build-template.cjs with the production Compose file.\ncat > compose.production.json <<'COMPOSE'\n{\n  \"name\": \"incidencias\",\n  \"services\": {\n    \"backend\": {\n      \"image\": \"${BACKEND_IMAGE:?Set BACKEND_IMAGE to an ECR image digest}\",\n      \"entrypoint\": [\"dumb-init\", \"--\", \"node\", \"deploy/entrypoint.cjs\"],\n      \"command\": [\"serve\"],\n      \"environment\": {\n        \"NODE_ENV\": \"production\", \"PORT\": \"3000\", \"DB_HOST\": \"${DB_HOST:?Set DB_HOST}\",\n        \"DB_PORT\": \"5432\", \"DB_NAME\": \"incidencias\", \"DATABASE_SSL\": \"true\",\n        \"DB_POOL_MAX\": \"10\", \"DB_CONNECTION_TIMEOUT_MS\": \"10000\", \"MIGRATE_ON_START\": \"false\",\n        \"FRONTEND_ORIGIN\": \"https://${DOMAIN_NAME:?Set DOMAIN_NAME}\", \"TRUST_PROXY_HOPS\": \"2\",\n        \"PHOTO_STORAGE_DIR\": \"/app/uploads/photos\",\n        \"INCIDENT_DUE_HOURS\": \"${INCIDENT_DUE_HOURS:-48}\",\n        \"INCIDENT_ESCALATION_HOURS\": \"${INCIDENT_ESCALATION_HOURS:-0}\"\n      },\n      \"volumes\": [\n        \"${PHOTOS_PATH:-/srv/incidencias/photos}:/app/uploads/photos\",\n        \"/opt/incidencias/secrets/app.json:/run/incidencias/app.json:ro\",\n        \"/opt/incidencias/secrets/jwt.json:/run/incidencias/jwt.json:ro\",\n        \"/opt/incidencias/secrets/rds-ca.pem:/run/incidencias/rds-ca.pem:ro\"\n      ],\n      \"read_only\": true, \"tmpfs\": [\"/tmp\"], \"cap_drop\": [\"ALL\"],\n      \"security_opt\": [\"no-new-privileges:true\"], \"restart\": \"unless-stopped\", \"stop_grace_period\": \"35s\",\n      \"mem_limit\": \"768m\", \"cpus\": 1.5,\n      \"logging\": {\"driver\": \"json-file\", \"options\": {\"max-size\": \"10m\", \"max-file\": \"3\"}}\n    },\n    \"frontend\": {\n      \"image\": \"${FRONTEND_IMAGE:?Set FRONTEND_IMAGE to an ECR image digest}\",\n      \"environment\": {\"BACKEND_UPSTREAM\": \"backend:3000\"},\n      \"ports\": [\"8080:8080\"],\n      \"depends_on\": {\"backend\": {\"condition\": \"service_healthy\"}},\n      \"restart\": \"unless-stopped\", \"stop_grace_period\": \"35s\", \"mem_limit\": \"128m\",\n      \"logging\": {\"driver\": \"json-file\", \"options\": {\"max-size\": \"10m\", \"max-file\": \"3\"}}\n    }\n  }\n}\n\nCOMPOSE\nprintf 'BACKEND_IMAGE=%s\\nFRONTEND_IMAGE=%s\\nDB_HOST=%s\\nDOMAIN_NAME=%s\\n' \"$BACKEND_IMAGE\" \"$FRONTEND_IMAGE\" \"$DB_HOST\" \"$DOMAIN_NAME\" > .env\nchmod 600 .env\nregistry=\"${BACKEND_IMAGE%%/*}\"\naws ecr get-login-password --region \"$AWS_REGION\" | docker login --username AWS --password-stdin \"$registry\"\ndocker compose -f compose.production.json pull\n\n# Run migrations and bootstrap accounts as separate jobs with temporary master access.\nfor attempt in $(seq 1 30); do\n  if docker compose -f compose.production.json run --rm --no-deps \\\n    -v /opt/incidencias/secrets/rds.json:/run/incidencias/rds.json:ro backend migrate; then break; fi\n  if [ \"$attempt\" = 30 ]; then exit 1; fi\n  sleep 10\ndone\ndocker compose -f compose.production.json run --rm --no-deps \\\n  -v /opt/incidencias/secrets/rds.json:/run/incidencias/rds.json:ro \\\n  -v /opt/incidencias/secrets/admin-one.json:/run/incidencias/admin-one.json:ro \\\n  -v /opt/incidencias/secrets/admin-two.json:/run/incidencias/admin-two.json:ro backend seed\n# No master/admin password files remain on the application host after bootstrap.\nrm -f secrets/rds.json secrets/admin-one.json secrets/admin-two.json\n\ncat > /etc/systemd/system/incidencias.service <<'SERVICE'\n[Unit]\nDescription=Incidencias web application\nRequires=docker.service\nAfter=docker.service network-online.target\nWants=network-online.target\nRequiresMountsFor=/srv/incidencias\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory=/opt/incidencias\nExecStartPre=/usr/bin/mountpoint -q /srv/incidencias\nExecStart=/usr/bin/docker compose -f compose.production.json up -d --wait --wait-timeout 180\nExecStop=/usr/bin/docker compose -f compose.production.json stop\nTimeoutStartSec=240\nTimeoutStopSec=90\n\n[Install]\nWantedBy=multi-user.target\nSERVICE\nsystemctl daemon-reload\nsystemctl enable --now incidencias\ncurl --fail --retry 12 --retry-delay 5 --retry-all-errors http://127.0.0.1:8080/ready\necho 'Incidencias preparada; confirma HTTPS y DNS antes de abrir el sitio.'\n"
+              ]
+            ]
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-app"
+            }
+          }
+        ]
+      }
+    },
+    "PhotoAttachment": {
+      "Type": "AWS::EC2::VolumeAttachment",
+      "Properties": {
+        "Device": "/dev/sdf",
+        "InstanceId": {
+          "Ref": "AppInstance"
+        },
+        "VolumeId": {
+          "Ref": "PhotoVolume"
+        }
+      }
+    },
+    "BootstrapReady": {
+      "Type": "AWS::CloudFormation::WaitCondition",
+      "DependsOn": "PhotoAttachment",
+      "Properties": {
+        "Handle": {
+          "Ref": "BootstrapHandle"
+        },
+        "Timeout": "1800",
+        "Count": 1
+      }
+    },
+    "LoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "DependsOn": "GatewayAttachment",
+      "Properties": {
+        "Scheme": "internet-facing",
+        "Type": "application",
+        "Subnets": [
+          {
+            "Ref": "PublicA"
+          },
+          {
+            "Ref": "PublicB"
+          }
+        ],
+        "SecurityGroups": [
+          {
+            "Ref": "AlbGroup"
+          }
+        ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "idle_timeout.timeout_seconds",
+            "Value": "120"
+          },
+          {
+            "Key": "routing.http.drop_invalid_header_fields.enabled",
+            "Value": "true"
+          }
+        ]
+      }
+    },
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Protocol": "HTTP",
+        "Port": 8080,
+        "TargetType": "instance",
+        "Targets": [
+          {
+            "Id": {
+              "Ref": "AppInstance"
+            },
+            "Port": 8080
+          }
+        ],
+        "HealthCheckPath": "/ready",
+        "Matcher": {
+          "HttpCode": "200"
+        },
+        "HealthCheckIntervalSeconds": 30,
+        "HealthyThresholdCount": 2,
+        "TargetGroupAttributes": [
+          {
+            "Key": "deregistration_delay.timeout_seconds",
+            "Value": "40"
+          }
+        ]
+      }
+    },
+    "HttpsListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": {
+          "Ref": "LoadBalancer"
+        },
+        "Port": 443,
+        "Protocol": "HTTPS",
+        "Certificates": [
+          {
+            "CertificateArn": {
+              "Ref": "CertificateArn"
+            }
+          }
+        ],
+        "SslPolicy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "TargetGroup"
+            }
+          }
+        ]
+      }
+    },
+    "HttpListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": {
+          "Ref": "LoadBalancer"
+        },
+        "Port": 80,
+        "Protocol": "HTTP",
+        "DefaultActions": [
+          {
+            "Type": "redirect",
+            "RedirectConfig": {
+              "Protocol": "HTTPS",
+              "Port": "443",
+              "StatusCode": "HTTP_301"
+            }
+          }
+        ]
+      }
+    },
+    "WebAcl": {
+      "Type": "AWS::WAFv2::WebACL",
+      "Properties": {
+        "Scope": "REGIONAL",
+        "DefaultAction": {
+          "Allow": {}
+        },
+        "VisibilityConfig": {
+          "CloudWatchMetricsEnabled": true,
+          "SampledRequestsEnabled": false,
+          "MetricName": "IncidenciasRequests"
+        },
+        "Rules": [
+          {
+            "Name": "AuthRateLimit",
+            "Priority": 0,
+            "Action": {
+              "Block": {}
+            },
+            "VisibilityConfig": {
+              "CloudWatchMetricsEnabled": true,
+              "SampledRequestsEnabled": false,
+              "MetricName": "IncidenciasAuthLimit"
+            },
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": 100,
+                "AggregateKeyType": "IP",
+                "EvaluationWindowSec": 300,
+                "ScopeDownStatement": {
+                  "OrStatement": {
+                    "Statements": [
+                      {
+                        "ByteMatchStatement": {
+                          "FieldToMatch": {
+                            "UriPath": {}
+                          },
+                          "PositionalConstraint": "EXACTLY",
+                          "SearchString": "/api/auth/login",
+                          "TextTransformations": [
+                            {
+                              "Priority": 0,
+                              "Type": "NONE"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "ByteMatchStatement": {
+                          "FieldToMatch": {
+                            "UriPath": {}
+                          },
+                          "PositionalConstraint": "EXACTLY",
+                          "SearchString": "/api/staff/auth/login",
+                          "TextTransformations": [
+                            {
+                              "Priority": 0,
+                              "Type": "NONE"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "ByteMatchStatement": {
+                          "FieldToMatch": {
+                            "UriPath": {}
+                          },
+                          "PositionalConstraint": "EXACTLY",
+                          "SearchString": "/api/auth/register",
+                          "TextTransformations": [
+                            {
+                              "Priority": 0,
+                              "Type": "NONE"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "Name": "OverallRateLimit",
+            "Priority": 1,
+            "Action": {
+              "Block": {}
+            },
+            "VisibilityConfig": {
+              "CloudWatchMetricsEnabled": true,
+              "SampledRequestsEnabled": false,
+              "MetricName": "IncidenciasOverallLimit"
+            },
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": 2000,
+                "AggregateKeyType": "IP",
+                "EvaluationWindowSec": 300
+              }
+            }
+          }
+        ]
+      }
+    },
+    "WebAclAssociation": {
+      "Type": "AWS::WAFv2::WebACLAssociation",
+      "Properties": {
+        "ResourceArn": {
+          "Ref": "LoadBalancer"
+        },
+        "WebACLArn": {
+          "Fn::GetAtt": [
+            "WebAcl",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "AppHealthAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "ALB has an unhealthy application target; check CloudWatch and SSM",
+        "Namespace": "AWS/ApplicationELB",
+        "MetricName": "UnHealthyHostCount",
+        "Dimensions": [
+          {
+            "Name": "LoadBalancer",
+            "Value": {
+              "Fn::GetAtt": [
+                "LoadBalancer",
+                "LoadBalancerFullName"
+              ]
+            }
+          },
+          {
+            "Name": "TargetGroup",
+            "Value": {
+              "Fn::GetAtt": [
+                "TargetGroup",
+                "TargetGroupFullName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "breaching"
+      }
+    }
+  },
+  "Outputs": {
+    "Website": {
+      "Value": {
+        "Fn::Sub": "https://${DomainName}"
+      }
+    },
+    "LoadBalancerDns": {
+      "Value": {
+        "Fn::GetAtt": [
+          "LoadBalancer",
+          "DNSName"
+        ]
+      }
+    },
+    "InstanceId": {
+      "Value": {
+        "Ref": "AppInstance"
+      }
+    },
+    "PhotoVolumeId": {
+      "Value": {
+        "Ref": "PhotoVolume"
+      }
+    },
+    "DatabaseEndpoint": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Database",
+          "Endpoint.Address"
+        ]
+      }
+    },
+    "AdminOneSecretArn": {
+      "Value": {
+        "Ref": "AdminOneSecret"
+      }
+    },
+    "AdminTwoSecretArn": {
+      "Value": {
+        "Ref": "AdminTwoSecret"
+      }
+    },
+    "RdsMasterSecretArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Database",
+          "MasterUserSecret.SecretArn"
+        ]
+      }
+    },
+    "AppSecretArn": {
+      "Value": {
+        "Ref": "AppSecret"
+      }
+    },
+    "JwtSecretArn": {
+      "Value": {
+        "Ref": "JwtSecret"
+      }
+    }
+  }
+}
