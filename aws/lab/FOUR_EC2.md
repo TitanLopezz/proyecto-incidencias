@@ -30,17 +30,9 @@ Revisa los cambios en CloudFormation y ejecuta el change set desde la consola. A
 aws cloudformation describe-stacks --region $Region --stack-name $Stack --query 'Stacks[0].Outputs' --output table
 ```
 
-## 2. Preparar los servidores
+## 2. Clonar el repositorio en cada EC2
 
-En cada EC2 instala Docker, inicia el servicio e instala Compose como complemento para todos los usuarios en `/usr/local/lib/docker/cli-plugins`. Así estará disponible al ejecutar Docker con `sudo`. [Instalación de Docker en Amazon Linux](https://docs.aws.amazon.com/es_es/serverless-application-model/latest/developerguide/install-docker.html) · [Instalación manual de Compose](https://docs.docker.com/compose/install/linux/#install-the-plugin-manually).
-
-```bash
-sudo dnf install -y docker
-sudo systemctl enable --now docker
-sudo docker compose version
-```
-
-Desde tu equipo, empaca los archivos versionados del commit que quieras desplegar. Git Archive incluye únicamente archivos de Git.
+Desde PowerShell, asigna las direcciones públicas que devolvió CloudFormation y conéctate a cada EC2.
 
 ```powershell
 $Key = 'C:/ruta/lab.pem'
@@ -48,21 +40,36 @@ $Front = 'FRONTEND_PUBLIC_IP'
 $Back = 'BACKEND_PUBLIC_IP'
 $Db = 'DATABASE_PUBLIC_IP'
 $N8n = 'AUTOMATION_PUBLIC_IP'
-$Bundle = Join-Path $env:TEMP 'incidencias-aws.tgz'
-git archive --format=tar.gz -o $Bundle HEAD aws/lab backend frontend n8n
-foreach ($Server in @($Front, $Back, $Db, $N8n)) {
-  scp -i $Key $Bundle "ec2-user@${Server}:~/incidencias-aws.tgz"
-  if ($LASTEXITCODE -ne 0) { throw "Falló la copia a $Server" }
-}
+ssh -i $Key "ec2-user@$Db"
 ```
 
-Conéctate a cada instancia con `ssh -i $Key "ec2-user@$Server"`, sustituyendo `$Server` por la variable que corresponda. En cada sesión ejecuta lo siguiente.
+Repite la conexión con `$Back`, `$Front` y `$N8n`. En cada instancia instala Git y Docker. Instala Compose como complemento para todos los usuarios en `/usr/local/lib/docker/cli-plugins`, de modo que esté disponible al ejecutar Docker con `sudo`. [Instalación de Docker en Amazon Linux](https://docs.aws.amazon.com/es_es/serverless-application-model/latest/developerguide/install-docker.html) · [Instalación manual de Compose](https://docs.docker.com/compose/install/linux/#install-the-plugin-manually).
 
 ```bash
-mkdir -p ~/incidencias
-cd ~/incidencias
-tar -xzf ~/incidencias-aws.tgz
+sudo dnf install -y git docker
+sudo systemctl enable --now docker
+sudo docker compose version
 ```
+
+El repositorio requiere autenticación. Genera una clave SSH distinta en cada EC2 y copia el contenido del archivo `.pub`. En GitHub abre **Settings → Deploy keys → Add deploy key** en el repositorio. Ponle el nombre de la instancia y deja desmarcada la opción **Allow write access**. [Claves de despliegue de GitHub](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys#deploy-keys).
+
+```bash
+mkdir -p -m 700 ~/.ssh
+ssh-keygen -t ed25519 -f ~/.ssh/incidencias_github -C "$(hostname)-incidencias"
+cat ~/.ssh/incidencias_github.pub
+```
+
+Clona como `ec2-user` y selecciona el mismo commit en las cuatro EC2. En la primera conexión, compara la huella SSH que muestra el cliente con la huella publicada por GitHub antes de aceptarla. [Huellas SSH de GitHub](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
+
+```bash
+git clone -c core.sshCommand='ssh -i ~/.ssh/incidencias_github -o IdentitiesOnly=yes' \
+  git@github.com:TitanLopezz/proyecto-incidencias.git ~/incidencias
+cd ~/incidencias
+git checkout --detach d12b2854cf4f04d998ce405aa416ee1fd59620a0
+git rev-parse HEAD
+```
+
+Si ya existe un clon en `~/incidencias`, entra en él y ejecuta `git fetch origin` antes de seleccionar el commit. Si el directorio contiene un despliegue anterior sin Git, conserva sus archivos de entorno y volúmenes antes de migrar. Ejecuta los pasos siguientes en orden **base de datos → backend → frontend → n8n**.
 
 ## 3. Iniciar PostgreSQL/PostGIS
 
