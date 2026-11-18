@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      NODE_ENV: development
+      MIGRATE_ON_START: "true"
+      FRONTEND_ORIGIN: http://localhost:8080
+      PGHOST: ${DB_PRIVATE_IP:?Indica la IP privada de la EC2 de base de datos}
+      PGDATABASE: incidencias
+      PGUSER: incidencias
+      PGPASSWORD: ${LAB_DB_PASSWORD:?Define LAB_DB_PASSWORD}
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${LAB_JWT_SECRET:?Define LAB_JWT_SECRET}
+      TELEGRAM_INTEGRATION_KEY: ${TELEGRAM_INTEGRATION_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      - photos:/app/uploads
+    restart: unless-stopped
+
+volumes:
+  photos:

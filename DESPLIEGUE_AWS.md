@@ -1,5 +1,9 @@
 # Despliegue en AWS desde cero
 
+Para desplegar **frontend, backend, PostgreSQL/PostGIS y n8n en cuatro EC2**, usa la [plantilla y guía de cuatro instancias](aws/lab/FOUR_EC2.md).
+
+Para el laboratorio con **dos EC2**, sigue la [guía de frontend y backend separados](aws/lab/README.md). La plantilla de esta página instala ambos servicios en una sola EC2.
+
 La preparación usa **una EC2, RDS PostgreSQL privado y ALB HTTPS**. Las fotos se
 guardan únicamente en un volumen EBS cifrado, en `/srv/incidencias/photos`.
 EBS es el disco del servidor alojado en AWS; no hay segunda copia, S3, AWS Backup
